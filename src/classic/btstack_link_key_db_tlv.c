@@ -37,6 +37,7 @@
 
 #define BTSTACK_FILE__ "btstack_link_key_db_tlv.c"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -97,8 +98,10 @@ static int btstack_link_key_db_tlv_get_link_key(bd_addr_t bd_addr, link_key_t li
         // found, pass back
         (void)memcpy(link_key, entry.link_key, 16);
         *link_key_type = entry.link_key_type;
+        printf("[TLV_LINK_KEY] get_link_key for %s FOUND (type: %u, tag: 0x%08X)\n", bd_addr_to_str(bd_addr), (unsigned int)*link_key_type, (unsigned int)tag);
         return 1;
     }
+    printf("[TLV_LINK_KEY] get_link_key for %s NOT FOUND in %d slots\n", bd_addr_to_str(bd_addr), NVM_NUM_LINK_KEYS);
 	return 0;
 }
 
@@ -172,9 +175,12 @@ static void btstack_link_key_db_tlv_put_link_key(bd_addr_t bd_addr, link_key_t l
     entry.link_key_type = link_key_type;
     entry.seq_nr = highest_seq_nr + 1;
 
+    printf("[TLV_LINK_KEY] storing key for %s (tag: 0x%08X, seq: %lu)\n", bd_addr_to_str(bd_addr), (unsigned int)tag_to_use, (unsigned long)(highest_seq_nr + 1));
     int result = self->btstack_tlv_impl->store_tag(self->btstack_tlv_context, tag_to_use, (uint8_t*) &entry, sizeof(entry));
     if (result != 0){
-        log_error("store link key failed");
+        printf("[TLV_LINK_KEY] ERROR: store link key failed, result=%d\n", result);
+    } else {
+        printf("[TLV_LINK_KEY] store link key OK!\n");
     }
 }
 

@@ -59,6 +59,7 @@
 #endif
 
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
 
@@ -570,6 +571,7 @@ void gap_drop_link_key_for_bd_addr(bd_addr_t addr){
 }
 
 void gap_store_link_key_for_bd_addr(bd_addr_t addr, link_key_t link_key, link_key_type_t type){
+    printf("[HCI] gap_store_link_key_for_bd_addr: %s, type %u, db=%p\n", bd_addr_to_str(addr), type, (void*)hci_stack->link_key_db);
     if (!hci_stack->link_key_db) return;
     log_info("gap_store_link_key_for_bd_addr: %s, type %u", bd_addr_to_str(addr), type);
     hci_stack->link_key_db->put_link_key(addr, link_key, type);
@@ -3990,11 +3992,13 @@ static void event_handler(uint8_t *packet, uint16_t size){
 #ifndef ENABLE_EXPLICIT_LINK_KEY_REPLY
             hci_event_link_key_request_get_bd_addr(packet, addr);
             conn = hci_connection_for_bd_addr_and_type(addr, BD_ADDR_TYPE_ACL);
+            printf("[HCI] --> HCI_EVENT_LINK_KEY_REQUEST for %s, link_key_db=%p, cached_type=%d\n", bd_addr_to_str(addr), (void*)hci_stack->link_key_db, conn ? conn->link_key_type : -1);
             if (!conn) break;
 
             // lookup link key in db if not cached
             if ((conn->link_key_type == INVALID_LINK_KEY) && (hci_stack->link_key_db != NULL)){
                 hci_stack->link_key_db->get_link_key(conn->address, conn->link_key, &conn->link_key_type);
+                printf("[HCI] DB lookup result for %s: link_key_type=%u\n", bd_addr_to_str(addr), conn->link_key_type);
             }
 
             // response sent by hci_run()
@@ -4005,6 +4009,7 @@ static void event_handler(uint8_t *packet, uint16_t size){
         case HCI_EVENT_LINK_KEY_NOTIFICATION: {
             hci_event_link_key_request_get_bd_addr(packet, addr);
             conn = hci_connection_for_bd_addr_and_type(addr, BD_ADDR_TYPE_ACL);
+            printf("[HCI] --> HCI_EVENT_LINK_KEY_NOTIFICATION for %s, conn=%p, bondable=%d\n", bd_addr_to_str(addr), (void*)conn, hci_stack->bondable);
             if (!conn) break;
 
             hci_pairing_complete(conn, ERROR_CODE_SUCCESS);
@@ -4022,17 +4027,10 @@ static void event_handler(uint8_t *packet, uint16_t size){
             // cache link key. link keys stored in little-endian format for legacy reasons
             memcpy(&conn->link_key, &packet[8], 16);
 
-            // only store link key:
-            // - if bondable enabled
-            if (hci_stack->bondable == false) break;
-            // - if at least one side requests bonding during the IO Capabilities exchange.
-            // Note: we drop bonding flag in acceptor role if remote doesn't request it
-            bool bonding_local  = conn->io_cap_request_auth_req  >= SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING;
-            bool bonding_remote = conn->io_cap_response_auth_req >= SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING;
-            if ((bonding_local == false) && (bonding_remote == false)) break;
-            // - if security level sufficient
-            if (gap_security_level_for_link_key_type(link_key_type) < conn->requested_security_level) break;
-            gap_store_link_key_for_bd_addr(addr, &packet[8], conn->link_key_type);
+            // only store link key if bondable enabled
+            if (hci_stack->bondable) {
+                gap_store_link_key_for_bd_addr(addr, &packet[8], conn->link_key_type);
+            }
             break;
         }
 
@@ -7351,14 +7349,6 @@ static bool hci_run_general_pending_commands(void){
                 connection->io_cap_request_auth_req |= 1;
             }
             bool bonding = hci_stack->bondable;
-            if (connection->authentication_flags & AUTH_FLAG_RECV_IO_CAPABILITIES_RESPONSE){
-                // if we have received IO Cap Response, we're in responder role
-                bool remote_bonding = connection->io_cap_response_auth_req >= SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING;
-                if (bonding && !remote_bonding){
-                    log_info("Remote not bonding, dropping local flag");
-                    bonding = false;
-                }
-            }
             if (bonding){
                 if (connection->bonding_flags & BONDING_DEDICATED){
                     connection->io_cap_request_auth_req |= SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_DEDICATED_BONDING;

@@ -39,6 +39,7 @@
 
 #include <string.h>
 #include <inttypes.h>
+#include <stdio.h>
 
 // Header:
 // - Magic: 'BTstack'
@@ -135,6 +136,8 @@ static void btstack_tlv_flash_bank_read(btstack_tlv_flash_bank_t * self, int ban
 }
 
 static void btstack_tlv_flash_bank_write(btstack_tlv_flash_bank_t * self, int bank, uint32_t offset, const uint8_t * buffer, uint32_t size){
+    printf("[BTSTACK_TLV] btstack_tlv_flash_bank_write: bank=%d, offset=0x%08lX (%lu), size=%lu, impl=%p\n",
+           bank, (unsigned long)offset, (unsigned long)offset, (unsigned long)size, (void*)self->hal_flash_bank_impl);
 
 	// write main data
 	uint32_t alignment = self->hal_flash_bank_impl->get_alignment(self->hal_flash_bank_context);
@@ -215,11 +218,13 @@ static int btstack_tlv_flash_bank_get_latest_bank(btstack_tlv_flash_bank_t * sel
  	btstack_tlv_flash_bank_read(self, 1, 0, &header1[0], BTSTACK_TLV_BANK_HEADER_LEN);
  	int valid0 = memcmp(header0, btstack_tlv_header_magic, BTSTACK_TLV_BANK_HEADER_LEN-1) == 0;
  	int valid1 = memcmp(header1, btstack_tlv_header_magic, BTSTACK_TLV_BANK_HEADER_LEN-1) == 0;
+    printf("[BTSTACK_TLV] get_latest_bank: Bank 0 magic valid=%d, Bank 1 magic valid=%d\n", valid0, valid1);
 	if (!valid0 && !valid1) return -1;
 	if ( valid0 && !valid1) return 0;
 	if (!valid0 &&  valid1) return 1;
 	int epoch0 = header0[BTSTACK_TLV_BANK_HEADER_LEN-1] & 0x03;
 	int epoch1 = header1[BTSTACK_TLV_BANK_HEADER_LEN-1] & 0x03;
+    printf("[BTSTACK_TLV] get_latest_bank: epoch0=%d, epoch1=%d\n", epoch0, epoch1);
 	if (epoch0 == ((epoch1 + 1) & 0x03)) return 0;
 	if (epoch1 == ((epoch0 + 1) & 0x03)) return 1;
 	return -1;	// invalid, must not happen
@@ -405,7 +410,6 @@ static int btstack_tlv_flash_bank_get_tag(void * context, uint32_t tag, uint8_t 
 	btstack_tlv_flash_bank_iterator_init(self, &it, self->current_bank);
 	while (btstack_tlv_flash_bank_iterator_has_next(self, &it)){
 		if (it.tag == tag){
-			log_info("Found tag '%x' at position %u", (unsigned int) tag, (unsigned int) it.offset);
 			tag_index = it.offset;
 			tag_len   = it.len;
 #ifndef ENABLE_TLV_FLASH_WRITE_ONCE
@@ -414,7 +418,9 @@ static int btstack_tlv_flash_bank_get_tag(void * context, uint32_t tag, uint8_t 
 		}
 		tlv_iterator_fetch_next(self, &it);
 	}
-	if (tag_index == 0) return 0;
+	if (tag_index == 0) {
+        return 0;
+    }
 	if (!buffer) return tag_len;
 	int copy_size = btstack_min(buffer_size, tag_len);
 	uint32_t value_offset = tag_index + self->entry_header_len;
@@ -423,6 +429,7 @@ static int btstack_tlv_flash_bank_get_tag(void * context, uint32_t tag, uint8_t 
 	value_offset += self->delete_tag_len;
 #endif
 	btstack_tlv_flash_bank_read(self, self->current_bank, value_offset, buffer, copy_size);
+    printf("[BTSTACK_TLV] get_tag: 0x%08lX found at offset %lu, size %d\n", (unsigned long)tag, (unsigned long)tag_index, copy_size);
 	return copy_size;
 }
 
@@ -443,12 +450,11 @@ static int btstack_tlv_flash_bank_store_tag(void * context, uint32_t tag, const 
 	}
 
 	if (self->write_offset + required_space > self->hal_flash_bank_impl->get_size(self->hal_flash_bank_context)){
-		log_error("couldn't write entry, not enough space left");
+		printf("[BTSTACK_TLV] ERROR: not enough space left to write tag 0x%08lX\n", (unsigned long)tag);
 		return 2;
 	}
 
-    // prepare entry
-    log_info("write '%" PRIx32 "', len %" PRIu32 " at %" PRIx32, tag, data_size, self->write_offset);
+    printf("[BTSTACK_TLV] store_tag: tag=0x%08lX, len=%lu at offset 0x%08lX (bank %d)\n", (unsigned long)tag, (unsigned long)data_size, (unsigned long)self->write_offset, self->current_bank);
 
     uint8_t alignment_buffer[BTSTACK_FLASH_ALIGNMENT_MAX];
     memset(alignment_buffer, 0, sizeof(alignment_buffer));
@@ -589,13 +595,15 @@ const btstack_tlv_t * btstack_tlv_flash_bank_init_instance(btstack_tlv_flash_ban
 	} 
 
 	if (self->current_bank < 0) {
+        printf("[BTSTACK_TLV] init_instance: No valid bank found, initializing new bank 0\n");
 		btstack_tlv_flash_bank_erase_bank(self, 0);
 		self->current_bank = 0;
 		btstack_tlv_flash_bank_write_header(self, self->current_bank, 0);	// epoch = 0;
         self->write_offset = btstack_tlv_flash_bank_align_size (self, BTSTACK_TLV_BANK_HEADER_LEN);
-	}
+	} else {
+        printf("[BTSTACK_TLV] init_instance: Using bank %d at write_offset 0x%08lX\n", self->current_bank, (unsigned long)self->write_offset);
+    }
 
-	log_info("write offset %" PRIx32, self->write_offset);
 	return &btstack_tlv_flash_bank;
 }
 
