@@ -427,17 +427,22 @@ static uint8_t hids_client_get_next_notification_report_index(hids_client_t * cl
         hid_protocol_mode_t  protocol_mode = client->services[report.service_index].protocol_mode;
 
         if (protocol_mode == HID_PROTOCOL_MODE_BOOT){
-            if (!client->reports[i].boot_report){
-                continue;
+            if (client->reports[i].boot_report){
+                if (report.report_type == HID_REPORT_TYPE_INPUT){
+                    index = i;
+                }
+            } else if ((report.properties & ATT_PROPERTY_NOTIFY) != 0){
+                // Fallback for devices without dedicated Boot Mouse/Keyboard characteristic
+                index = i;
             }
         } else if (protocol_mode == HID_PROTOCOL_MODE_REPORT){
             if (client->reports[i].boot_report){
                 continue;
             }
+            if (report.report_type == HID_REPORT_TYPE_INPUT){
+                index = i;
+            } 
         }
-        if (report.report_type == HID_REPORT_TYPE_INPUT){
-            index = i;
-        } 
     }
     client->report_index = index;
     return index;
